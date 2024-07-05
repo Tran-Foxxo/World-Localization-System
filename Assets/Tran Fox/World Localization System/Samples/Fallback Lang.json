@@ -1,0 +1,5 @@
+{
+  "DefaultText": "This is fallback text.",
+  "SampleText": "Sample fallback",
+  "KeyThatIsntInCurrentLang": "This is only in the fallback.",
+}

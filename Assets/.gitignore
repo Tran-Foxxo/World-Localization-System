@@ -1,0 +1,6 @@
+# Only grab the Tran Fox folder
+/*
+!/Tran Fox/
+
+# Also uhh include the gitignore
+!.gitignore
