@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.TextCore.Text;
@@ -15,8 +16,10 @@ namespace TranFox.LocalizationSystem
         int _SelectedKeySearchIndex = 0;
 
         TextAsset _CurrentLoadedAsset;
-        string _CurrentValueContents;
-        DataDictionary _LoadedLanguage;
+
+        // Bodge to fix playmode issues
+        List<string> _LoadedLanguageKeys;
+        List<string> _LoadedLanguageValues;
 
         [MenuItem("Tran Fox/Language Json Editor")]
         static void Init()
@@ -44,7 +47,8 @@ namespace TranFox.LocalizationSystem
                 if (changed)
                 {
                     _CurrentLoadedAsset = _LanguageAsset;
-                    _LoadedLanguage = null;
+                    _LoadedLanguageKeys = null;
+                    _LoadedLanguageValues = null;
                     _SelectedKeySearchIndex = 0;
                 }
                 else
@@ -53,13 +57,29 @@ namespace TranFox.LocalizationSystem
                 }
             }
 
+            // If no lang is loaded return
             if (_CurrentLoadedAsset == null) return;
 
-            if (_LoadedLanguage == null)
+            // Load new language
+            if (_LoadedLanguageKeys == null || _LoadedLanguageValues == null)
             {
                 if (VRCJson.TryDeserializeFromJson(_CurrentLoadedAsset.text, out DataToken result) == true)
                 {
-                    _LoadedLanguage = result.DataDictionary;
+                    _LoadedLanguageKeys = new List<string>();
+                    _LoadedLanguageValues = new List<string>();
+
+                    Debug.Log("LOADING LANG");
+                    var resultKeys = result.DataDictionary.GetKeys();
+                    var resultValues = result.DataDictionary.GetValues();
+                    
+                    for(int i = 0; i < resultKeys.Count; i++) 
+                    {
+                        if (resultKeys[i].TokenType == TokenType.String && resultValues[i].TokenType == TokenType.String)
+                        {
+                            _LoadedLanguageKeys.Add(resultKeys[i].String);
+                            _LoadedLanguageValues.Add(resultValues[i].String);
+                        }
+                    }
                 }
                 else
                 {
@@ -70,25 +90,13 @@ namespace TranFox.LocalizationSystem
 
             EditorGUILayout.Space(10);
 
-            // Get keys
-            List<string> stringKeys = new List<string>();
-            var dictKeys = _LoadedLanguage.GetKeys();
-            for (int i = 0; i < dictKeys.Count; i++)
-            {
-                var dictKey = dictKeys[i];
-
-                if (dictKey.TokenType == TokenType.String)
-                    stringKeys.Add(dictKey.String);
-            }
-
+            // Key Search
             _KeySearch = EditorGUILayout.TextField("Key Search: ", _KeySearch);
-
             List<string> keysAfterSearch = new List<string>();
-            foreach (string key in stringKeys)
+            foreach (string key in _LoadedLanguageKeys)
             {
                 if (key.Contains(_KeySearch, System.StringComparison.CurrentCultureIgnoreCase))
-                    if (_LoadedLanguage[key].TokenType == TokenType.String)
-                        keysAfterSearch.Add(key);
+                    keysAfterSearch.Add(key);
             }
 
             // Key selection dropdown
@@ -101,15 +109,19 @@ namespace TranFox.LocalizationSystem
             EditorGUILayout.Space(10);
 
             // Add Key
-            if (!stringKeys.Contains(_KeySearch) && _KeySearch != "")
+            if (!_LoadedLanguageKeys.Contains(_KeySearch) && _KeySearch != "")
             {
                 if (GUILayout.Button($"Add Key \"{_KeySearch}\""))
-                    _LoadedLanguage.Add(_KeySearch, "");
+                {
+                    _LoadedLanguageKeys.Add(_KeySearch);
+                    _LoadedLanguageValues.Add("");
+                }
             }
             if (keysAfterSearch.Count == 0) { return; }
             
             // Get selected key
             string currentKey = keysAfterSearch[_SelectedKeySearchIndex];
+            int currentKeyIndex = _LoadedLanguageKeys.IndexOf(currentKey);
 
             // Key Deletion
             if (GUILayout.Button($"Remove Key \"{currentKey}\""))
@@ -121,42 +133,39 @@ namespace TranFox.LocalizationSystem
                     "Yes",
                     "No")
                     ) 
-                { 
-                    _LoadedLanguage.Remove(currentKey); 
+                {
+                    _LoadedLanguageKeys.RemoveAt(currentKeyIndex);
+                    _LoadedLanguageValues.RemoveAt(currentKeyIndex);
                 }
             }
 
             EditorGUILayout.Space(10);
 
             // Edtinging box
-            GUILayout.Label($"KEY \"{currentKey}\":", EditorStyles.boldLabel);
-            _LoadedLanguage[currentKey] = EditorGUILayout.TextArea(_LoadedLanguage[currentKey].String);
+            GUILayout.Label($"KEY \"{currentKey}\" ({currentKeyIndex}):", EditorStyles.boldLabel);
+            _LoadedLanguageValues[currentKeyIndex] = EditorGUILayout.TextArea(_LoadedLanguageValues[currentKeyIndex]);
 
             // Saving
             if (GUILayout.Button("Save Language"))
             {
-                // So for SOME reason, deleting a key leaves a blank "null" value and keeps the key.
-                // So instead we will manually only save string keys & values.
-                DataDictionary fixedDictionary = new DataDictionary();
-                var keys = _LoadedLanguage.GetKeys();
-                var values = _LoadedLanguage.GetValues();
-                for (int i = 0; i < _LoadedLanguage.Count; i++)
+                // Make our own DataDictionary in case VRChat weirdness lol
+                DataDictionary outputDictionary = new DataDictionary();
+                var keys = _LoadedLanguageKeys.ToArray();
+                var values = _LoadedLanguageValues.ToArray();
+
+                for (int i = 0; i < _LoadedLanguageKeys.Count; i++)
                 {
-                    if (keys[i].TokenType == TokenType.String && values[i].TokenType == TokenType.String)
-                    {
-                        string keyString = keys[i].String;
-                        string valueString = values[i].String;
+                    string keyString = keys[i];
+                    string valueString = values[i];
 
-                        // Remove \r's this may cause unexpected behaviour with TMP actually supporting them
-                        // If you really need \r for some reason just comment out this line I guess.
-                        valueString = valueString.Replace("\r", "");
+                    // Remove \r's this may cause unexpected behaviour with TMP actually supporting them
+                    // If you really need \r for some reason just comment out this line I guess.
+                    valueString = valueString.Replace("\r", "");
 
-                        fixedDictionary.Add(keyString, valueString);
-                    }
+                    outputDictionary.Add(keyString, valueString);
                 }
 
-                var outToken = new DataToken(); 
-                bool worked = VRCJson.TrySerializeToJson(fixedDictionary, JsonExportType.Beautify, out outToken);
+                bool worked = VRCJson.TrySerializeToJson(outputDictionary, JsonExportType.Beautify, out DataToken outToken);
 
                 if (!worked) { Debug.LogError("[LanguageJsonEditor] UNABLE TO SAVE FOR SOME REASON???"); return; }
 
